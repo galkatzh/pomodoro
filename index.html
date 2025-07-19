@@ -1,7 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pomodoro Timer</title>
@@ -387,6 +386,7 @@
     <div class="container" id="container">
         <h1>🍅 Pomodoro Timer</h1>
         <div class="session-info" id="sessionInfo">Work Session</div>
+    
         
         <div class="progress-ring">
             <svg width="200" height="200">
@@ -466,6 +466,7 @@
                             <button id="spotifyConnectBtn" class="spotify-connect-btn">
                                 🎵 Connect Spotify
                             </button>
+                            
                             
                         </div>
                         
@@ -655,11 +656,21 @@
                 });
                 
                 // Spotify events
-                this.spotifyConnectBtn.addEventListener('click', () => this.connectSpotify());
-                this.spotifyDisconnectBtn.addEventListener('click', () => this.disconnectSpotify());
-                this.searchWorkTrackBtn.addEventListener('click', () => this.searchTrack('work'));
-                this.searchBreakTrackBtn.addEventListener('click', () => this.searchTrack('break'));
-                this.debugSpotifyBtn.addEventListener('click', () => this.debugSpotifyConnection());
+                if (this.spotifyConnectBtn) {
+                    this.spotifyConnectBtn.addEventListener('click', () => this.connectSpotify());
+                }
+                if (this.spotifyDisconnectBtn) {
+                    this.spotifyDisconnectBtn.addEventListener('click', () => this.disconnectSpotify());
+                }
+                if (this.searchWorkTrackBtn) {
+                    this.searchWorkTrackBtn.addEventListener('click', () => this.searchTrack('work'));
+                }
+                if (this.searchBreakTrackBtn) {
+                    this.searchBreakTrackBtn.addEventListener('click', () => this.searchTrack('break'));
+                }
+                if (this.debugSpotifyBtn) {
+                    this.debugSpotifyBtn.addEventListener('click', () => this.debugSpotifyConnection());
+                }
             }
             
             openSettings() {
@@ -1052,15 +1063,14 @@
             
             // Spotify Integration Methods
             async connectSpotify() {
-                if (this.spotifyClientId === 'YOUR_SPOTIFY_CLIENT_ID') {
-                    alert('Please replace YOUR_SPOTIFY_CLIENT_ID with your actual Spotify Client ID from the Spotify Developer Dashboard.\n\nSteps:\n1. Go to https://developer.spotify.com/dashboard\n2. Create an app\n3. Copy the Client ID\n4. Replace it in the code\n5. Add this URL as a Redirect URI in your app: ' + this.spotifyRedirectUri);
-                    return;
-                }
+                
                 
                 const codeVerifier = this.generateCodeVerifier();
                 const codeChallenge = await this.generateCodeChallenge(codeVerifier);
                 
+                // Store code verifier in multiple places for persistence
                 window.spotifyCodeVerifier = codeVerifier;
+                this.storeCodeVerifier(codeVerifier);
                 
                 console.log('Connecting to Spotify with redirect URI:', this.spotifyRedirectUri);
                 console.log('Make sure this exact URL is added to your Spotify app\'s Redirect URIs');
@@ -1072,6 +1082,7 @@
                     scope: this.spotifyScopes,
                     code_challenge_method: 'S256',
                     code_challenge: codeChallenge,
+                    state: btoa(codeVerifier).replace(/=/g, '') // Store verifier in state as backup
                 });
                 
                 const authUrl = `https://accounts.spotify.com/authorize?${params.toString()}`;
@@ -1084,6 +1095,7 @@
                 const urlParams = new URLSearchParams(window.location.search);
                 const code = urlParams.get('code');
                 const error = urlParams.get('error');
+                const state = urlParams.get('state');
                 
                 if (error) {
                     console.error('Spotify authorization error:', error);
@@ -1094,7 +1106,7 @@
                 if (code) {
                     console.log('Spotify authorization code received, exchanging for token...');
                     try {
-                        await this.getAccessToken(code);
+                        await this.getAccessToken(code, state);
                         // Clean URL
                         window.history.replaceState({}, document.title, window.location.pathname);
                         console.log('Spotify authentication successful!');
@@ -1105,11 +1117,11 @@
                 }
             }
             
-            async getAccessToken(code) {
-                const codeVerifier = window.spotifyCodeVerifier;
+            async getAccessToken(code, state) {
+                let codeVerifier = this.getCodeVerifier(state);
                 
                 if (!codeVerifier) {
-                    throw new Error('Code verifier not found. Please try connecting again.');
+                    throw new Error('Code verifier not found. This usually happens when:\n1. The page was refreshed during auth\n2. Browser storage was cleared\n3. Multiple auth attempts interfered\n\nPlease try connecting again.');
                 }
                 
                 const params = new URLSearchParams({
@@ -1131,15 +1143,20 @@
                 });
                 
                 const data = await response.json();
-                console.log('Token exchange response:', data);
+                console.log('Token exchange response status:', response.status);
                 
                 if (!response.ok) {
+                    console.error('Token exchange error:', data);
                     throw new Error(data.error_description || data.error || 'Token exchange failed');
                 }
                 
                 if (data.access_token) {
                     this.spotifyAccessToken = data.access_token;
                     console.log('Access token received, initializing player...');
+                    
+                    // Clean up code verifier storage
+                    this.clearCodeVerifier();
+                    
                     await this.initializeSpotifyPlayer();
                     this.settings.spotifyEnabled = true;
                     this.updateSpotifyUI();
@@ -1195,10 +1212,13 @@
                 this.settings.workCompleteTrack = null;
                 this.settings.breakCompleteTrack = null;
                 
+                // Clean up all stored data
                 delete window.spotifyAccessToken;
-                delete window.spotifyCodeVerifier;
+                this.clearCodeVerifier();
                 
                 this.updateSpotifyUI();
+                
+                alert('Spotify disconnected successfully.');
             }
             
             updateSpotifyUI() {
@@ -1208,22 +1228,27 @@
                 }
                 
                 if (this.settings.spotifyEnabled && this.isSpotifyReady) {
-                    this.spotifyLogin.style.display = 'none';
-                    this.spotifyConnected.style.display = 'block';
+                    if (this.spotifyLogin) this.spotifyLogin.style.display = 'none';
+                    if (this.spotifyConnected) this.spotifyConnected.style.display = 'block';
                     
-                    if (this.settings.workCompleteTrack) {
+                    if (this.settings.workCompleteTrack && this.workCompleteTrackInput) {
                         this.workCompleteTrackInput.value = this.settings.workCompleteTrack.name + ' - ' + this.settings.workCompleteTrack.artists[0].name;
                     }
-                    if (this.settings.breakCompleteTrack) {
+                    if (this.settings.breakCompleteTrack && this.breakCompleteTrackInput) {
                         this.breakCompleteTrackInput.value = this.settings.breakCompleteTrack.name + ' - ' + this.settings.breakCompleteTrack.artists[0].name;
                     }
                 } else {
-                    this.spotifyLogin.style.display = 'block';
-                    this.spotifyConnected.style.display = 'none';
+                    if (this.spotifyLogin) this.spotifyLogin.style.display = 'block';
+                    if (this.spotifyConnected) this.spotifyConnected.style.display = 'none';
                 }
             }
             
             debugSpotifyConnection() {
+                const urlParams = new URLSearchParams(window.location.search);
+                const hasCode = !!urlParams.get('code');
+                const hasState = !!urlParams.get('state');
+                const codeVerifier = this.getCodeVerifier(urlParams.get('state'));
+                
                 const debugInfo = `
 🔍 Spotify Connection Debug Info:
 
@@ -1232,7 +1257,14 @@
 • Redirect URI: ${this.spotifyRedirectUri}
 • Current URL: ${window.location.href}
 
-📋 Checklist:
+🔐 OAuth State:
+• Has authorization code: ${hasCode}
+• Has state parameter: ${hasState}
+• Code verifier found: ${!!codeVerifier}
+• Access token: ${!!this.spotifyAccessToken}
+• Player ready: ${this.isSpotifyReady}
+
+📋 Setup Checklist:
 1. ✓ Replace YOUR_SPOTIFY_CLIENT_ID with actual Client ID
 2. ✓ Add redirect URI to Spotify app settings
 3. ✓ Have Spotify Premium account
@@ -1243,6 +1275,7 @@
 • Missing https:// in production
 • Ad blockers blocking SDK
 • Popup blockers preventing authorization
+• Code verifier lost during redirect (now fixed!)
 
 🌐 Test URL:
 ${window.location.origin + window.location.pathname}
@@ -1250,15 +1283,18 @@ ${window.location.origin + window.location.pathname}
 Check browser console (F12) for detailed error messages.
                 `.trim();
                 
+                console.log('=== SPOTIFY DEBUG INFO ===');
+                console.log('Client ID:', this.spotifyClientId);
+                console.log('Redirect URI:', this.spotifyRedirectUri);
+                console.log('Current URL:', window.location.href);
+                console.log('Has Code:', hasCode);
+                console.log('Has State:', hasState);
+                console.log('Code Verifier Found:', !!codeVerifier);
+                console.log('Has Access Token:', !!this.spotifyAccessToken);
+                console.log('Is Player Ready:', this.isSpotifyReady);
+                console.log('========================');
+                
                 alert(debugInfo);
-                console.log('Spotify Debug Info:', {
-                    clientId: this.spotifyClientId,
-                    redirectUri: this.spotifyRedirectUri,
-                    currentUrl: window.location.href,
-                    hasCodeVerifier: !!window.spotifyCodeVerifier,
-                    hasAccessToken: !!this.spotifyAccessToken,
-                    isPlayerReady: this.isSpotifyReady
-                });
             }
             
             async searchTrack(type) {
@@ -1334,6 +1370,104 @@ Check browser console (F12) for detailed error messages.
                     .replace(/=/g, '')
                     .replace(/\+/g, '-')
                     .replace(/\//g, '_');
+            }
+            
+            // Code verifier storage methods (multiple fallbacks)
+            storeCodeVerifier(codeVerifier) {
+                try {
+                    // Try sessionStorage first
+                    if (typeof sessionStorage !== 'undefined') {
+                        sessionStorage.setItem('spotify_code_verifier', codeVerifier);
+                        console.log('Code verifier stored in sessionStorage');
+                        return;
+                    }
+                } catch (e) {
+                    console.log('sessionStorage not available:', e.message);
+                }
+                
+                try {
+                    // Fallback to cookie
+                    document.cookie = `spotify_code_verifier=${codeVerifier}; path=/; max-age=600`; // 10 minutes
+                    console.log('Code verifier stored in cookie');
+                } catch (e) {
+                    console.log('Cookie storage failed:', e.message);
+                }
+                
+                // Last resort - store in a global variable with a unique key
+                window.spotifyCodeVerifierBackup = codeVerifier;
+                console.log('Code verifier stored in window backup');
+            }
+            
+            getCodeVerifier(state) {
+                let codeVerifier = null;
+                
+                // Method 1: Try sessionStorage
+                try {
+                    if (typeof sessionStorage !== 'undefined') {
+                        codeVerifier = sessionStorage.getItem('spotify_code_verifier');
+                        if (codeVerifier) {
+                            console.log('Code verifier retrieved from sessionStorage');
+                            return codeVerifier;
+                        }
+                    }
+                } catch (e) {
+                    console.log('sessionStorage retrieval failed:', e.message);
+                }
+                
+                // Method 2: Try cookie
+                try {
+                    const cookies = document.cookie.split(';');
+                    for (let cookie of cookies) {
+                        const [name, value] = cookie.trim().split('=');
+                        if (name === 'spotify_code_verifier') {
+                            console.log('Code verifier retrieved from cookie');
+                            return value;
+                        }
+                    }
+                } catch (e) {
+                    console.log('Cookie retrieval failed:', e.message);
+                }
+                
+                // Method 3: Try state parameter (backup method)
+                if (state) {
+                    try {
+                        codeVerifier = atob(state + '==='); // Add padding for base64
+                        console.log('Code verifier retrieved from state parameter');
+                        return codeVerifier;
+                    } catch (e) {
+                        console.log('State parameter decoding failed:', e.message);
+                    }
+                }
+                
+                // Method 4: Try window backup
+                if (window.spotifyCodeVerifierBackup) {
+                    console.log('Code verifier retrieved from window backup');
+                    return window.spotifyCodeVerifierBackup;
+                }
+                
+                // Method 5: Try the original window variable
+                if (window.spotifyCodeVerifier) {
+                    console.log('Code verifier retrieved from window variable');
+                    return window.spotifyCodeVerifier;
+                }
+                
+                return null;
+            }
+            
+            clearCodeVerifier() {
+                // Clean up all storage methods
+                try {
+                    if (typeof sessionStorage !== 'undefined') {
+                        sessionStorage.removeItem('spotify_code_verifier');
+                    }
+                } catch (e) {}
+                
+                try {
+                    document.cookie = 'spotify_code_verifier=; path=/; max-age=0';
+                } catch (e) {}
+                
+                delete window.spotifyCodeVerifier;
+                delete window.spotifyCodeVerifierBackup;
             }
         }
         
