@@ -380,13 +380,37 @@
         .track-search-btn:hover {
             background: rgba(255, 255, 255, 0.3);
         }
+
+        .track-test-btn {
+            background: rgba(29, 185, 84, 0.7);
+            color: white;
+            border: 1px solid rgba(29, 185, 84, 0.8);
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .track-test-btn:hover {
+            background: rgba(29, 185, 84, 0.9);
+            transform: translateY(-1px);
+        }
+
+        .track-test-btn:disabled {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: rgba(255, 255, 255, 0.2);
+            color: rgba(255, 255, 255, 0.5);
+            cursor: not-allowed;
+            transform: none;
+        }
     </style>
 </head>
 <body>
     <div class="container" id="container">
         <h1>🍅 Pomodoro Timer</h1>
         <div class="session-info" id="sessionInfo">Work Session</div>
-    
+        
         
         <div class="progress-ring">
             <svg width="200" height="200">
@@ -467,7 +491,6 @@
                                 🎵 Connect Spotify
                             </button>
                             
-                            
                         </div>
                         
                         <div id="spotifyConnected" class="spotify-connected" style="display: none;">
@@ -494,6 +517,15 @@
                             <button id="spotifyDisconnectBtn" class="spotify-disconnect-btn">
                                 Disconnect Spotify
                             </button>
+                            
+                            <div style="margin-top: 15px; display: flex; gap: 10px;">
+                                <button id="testWorkTrackBtn" class="track-test-btn" style="flex: 1;">
+                                    🎵 Test Work Track
+                                </button>
+                                <button id="testBreakTrackBtn" class="track-test-btn" style="flex: 1;">
+                                    🎵 Test Break Track
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -615,6 +647,8 @@
                 this.searchBreakTrackBtn = document.getElementById('searchBreakTrack');
                 this.debugSpotifyBtn = document.getElementById('debugSpotifyBtn');
                 this.redirectUriDisplay = document.getElementById('redirectUriDisplay');
+                this.testWorkTrackBtn = document.getElementById('testWorkTrackBtn');
+                this.testBreakTrackBtn = document.getElementById('testBreakTrackBtn');
             }
             
             initProgressRing() {
@@ -671,6 +705,12 @@
                 if (this.debugSpotifyBtn) {
                     this.debugSpotifyBtn.addEventListener('click', () => this.debugSpotifyConnection());
                 }
+                if (this.testWorkTrackBtn) {
+                    this.testWorkTrackBtn.addEventListener('click', () => this.testTrack('work'));
+                }
+                if (this.testBreakTrackBtn) {
+                    this.testBreakTrackBtn.addEventListener('click', () => this.testTrack('break'));
+                }
             }
             
             openSettings() {
@@ -716,7 +756,11 @@
                     sessionsBeforeLongBreak: parseInt(this.sessionsInput.value),
                     extensionMinutes: parseInt(this.extensionInput.value),
                     autoStart: this.autoStartInput.checked,
-                    soundEnabled: this.soundInput.checked
+                    soundEnabled: this.soundInput.checked,
+                    // Preserve existing Spotify settings
+                    spotifyEnabled: this.settings.spotifyEnabled,
+                    workCompleteTrack: this.settings.workCompleteTrack,
+                    breakCompleteTrack: this.settings.breakCompleteTrack
                 };
                 
                 // Validate settings
@@ -734,7 +778,7 @@
                 // Store settings in memory (localStorage not available in artifacts)
                 window.pomodoroSettings = this.settings;
                 
-                this.applyNewSettings();
+                this.applyNewTimerSettings(); // Only apply timer settings, not Spotify
                 this.closeSettingsModal();
             }
             
@@ -754,14 +798,21 @@
                 // Load settings from memory
                 if (window.pomodoroSettings) {
                     this.settings = { ...this.settings, ...window.pomodoroSettings };
+                    console.log('Settings loaded:', this.settings);
                     this.applyNewSettings();
                 }
                 
                 // Restore Spotify connection if token exists
-                if (window.spotifyAccessToken) {
+                if (window.spotifyAccessToken && this.settings.spotifyEnabled) {
+                    console.log('Restoring Spotify connection...');
                     this.spotifyAccessToken = window.spotifyAccessToken;
                     this.initializeSpotifyPlayer().then(() => {
                         this.settings.spotifyEnabled = true;
+                        this.updateSpotifyUI();
+                        console.log('✅ Spotify connection restored');
+                    }).catch(error => {
+                        console.error('Failed to restore Spotify connection:', error);
+                        this.settings.spotifyEnabled = false;
                         this.updateSpotifyUI();
                     });
                 }
@@ -1015,6 +1066,11 @@
             }
             
             async playNotification() {
+                console.log('🔔 Playing notification...');
+                console.log('Spotify enabled:', this.settings.spotifyEnabled);
+                console.log('Spotify ready:', this.isSpotifyReady);
+                console.log('Is work session:', this.isWorkSession);
+                
                 // Try Spotify first if enabled and track is configured
                 let spotifyPlayed = false;
                 
@@ -1023,13 +1079,20 @@
                         this.settings.workCompleteTrack : 
                         this.settings.breakCompleteTrack;
                     
+                    console.log('Selected track:', track?.name || 'None');
+                    
                     if (track) {
+                        console.log('🎵 Attempting to play Spotify track...');
                         spotifyPlayed = await this.playSpotifyTrack(track);
+                        console.log('Spotify playback result:', spotifyPlayed);
+                    } else {
+                        console.log('❌ No track configured for this session type');
                     }
                 }
                 
                 // Fall back to audio beep if Spotify didn't play or sound is enabled
                 if (!spotifyPlayed && this.settings.soundEnabled) {
+                    console.log('🔊 Playing audio beep fallback');
                     try {
                         const audioContext = new (window.AudioContext || window.webkitAudioContext)();
                         const oscillator = audioContext.createOscillator();
@@ -1047,8 +1110,12 @@
                         oscillator.start(audioContext.currentTime);
                         oscillator.stop(audioContext.currentTime + 0.5);
                     } catch (error) {
-                        console.log('Audio notification not available');
+                        console.log('Audio notification not available:', error);
                     }
+                } else if (spotifyPlayed) {
+                    console.log('✅ Spotify track played successfully, skipping beep');
+                } else {
+                    console.log('🔇 No notification played (sound disabled and no Spotify)');
                 }
                 
                 // Show browser notification if permission granted
@@ -1063,7 +1130,10 @@
             
             // Spotify Integration Methods
             async connectSpotify() {
-                
+                if (this.spotifyClientId === 'YOUR_SPOTIFY_CLIENT_ID') {
+                    alert('Please replace YOUR_SPOTIFY_CLIENT_ID with your actual Spotify Client ID from the Spotify Developer Dashboard.\n\nSteps:\n1. Go to https://developer.spotify.com/dashboard\n2. Create an app\n3. Copy the Client ID\n4. Replace it in the code\n5. Add this URL as a Redirect URI in your app: ' + this.spotifyRedirectUri);
+                    return;
+                }
                 
                 const codeVerifier = this.generateCodeVerifier();
                 const codeChallenge = await this.generateCodeChallenge(codeVerifier);
@@ -1172,23 +1242,46 @@
             
             async initializeSpotifyPlayer() {
                 return new Promise((resolve) => {
+                    console.log('Initializing Spotify player...');
+                    
                     window.onSpotifyWebPlaybackSDKReady = () => {
                         this.spotifyPlayer = new Spotify.Player({
                             name: 'Pomodoro Timer',
                             getOAuthToken: cb => { cb(this.spotifyAccessToken); },
-                            volume: 0.3
+                            volume: 0.6
                         });
                         
                         this.spotifyPlayer.addListener('ready', ({ device_id }) => {
+                            console.log('✅ Spotify player ready with device ID:', device_id);
                             this.spotifyDeviceId = device_id;
                             this.isSpotifyReady = true;
                             resolve();
                         });
                         
                         this.spotifyPlayer.addListener('not_ready', ({ device_id }) => {
+                            console.log('❌ Spotify player not ready:', device_id);
                             this.isSpotifyReady = false;
                         });
                         
+                        this.spotifyPlayer.addListener('initialization_error', ({ message }) => {
+                            console.error('Spotify initialization error:', message);
+                        });
+                        
+                        this.spotifyPlayer.addListener('authentication_error', ({ message }) => {
+                            console.error('Spotify authentication error:', message);
+                            this.disconnectSpotify();
+                        });
+                        
+                        this.spotifyPlayer.addListener('account_error', ({ message }) => {
+                            console.error('Spotify account error:', message);
+                            alert('Spotify Premium account required for music playback');
+                        });
+                        
+                        this.spotifyPlayer.addListener('playback_error', ({ message }) => {
+                            console.error('Spotify playback error:', message);
+                        });
+                        
+                        console.log('Connecting Spotify player...');
                         this.spotifyPlayer.connect();
                     };
                     
@@ -1237,9 +1330,36 @@
                     if (this.settings.breakCompleteTrack && this.breakCompleteTrackInput) {
                         this.breakCompleteTrackInput.value = this.settings.breakCompleteTrack.name + ' - ' + this.settings.breakCompleteTrack.artists[0].name;
                     }
+                    
+                    // Update test button states
+                    if (this.testWorkTrackBtn) {
+                        this.testWorkTrackBtn.disabled = !this.settings.workCompleteTrack;
+                    }
+                    if (this.testBreakTrackBtn) {
+                        this.testBreakTrackBtn.disabled = !this.settings.breakCompleteTrack;
+                    }
                 } else {
                     if (this.spotifyLogin) this.spotifyLogin.style.display = 'block';
                     if (this.spotifyConnected) this.spotifyConnected.style.display = 'none';
+                }
+            }
+            
+            async testTrack(type) {
+                const track = type === 'work' ? this.settings.workCompleteTrack : this.settings.breakCompleteTrack;
+                
+                if (!track) {
+                    alert(`No ${type} completion track selected. Please search for a track first.`);
+                    return;
+                }
+                
+                console.log(`🎵 Testing ${type} track:`, track.name);
+                
+                const success = await this.playSpotifyTrack(track);
+                
+                if (success) {
+                    alert(`✅ Playing "${track.name}" by ${track.artists[0].name}`);
+                } else {
+                    alert(`❌ Failed to play track. Check browser console for details.`);
                 }
             }
             
@@ -1322,36 +1442,98 @@ Check browser console (F12) for detailed error messages.
                             this.breakCompleteTrackInput.value = track.name + ' - ' + track.artists[0].name;
                         }
                         
-                        // Store settings
+                        // Store settings immediately
                         window.pomodoroSettings = this.settings;
+                        
+                        console.log(`${type} track selected:`, track.name, 'by', track.artists[0].name);
+                        alert(`✅ Track selected: "${track.name}" by ${track.artists[0].name}`);
                     } else {
                         alert('No tracks found. Try a different search term.');
                     }
                 } catch (error) {
                     console.error('Search failed:', error);
-                    alert('Search failed. Please try again.');
+                    if (error.message.includes('401')) {
+                        alert('Spotify authorization expired. Please reconnect to Spotify.');
+                        this.disconnectSpotify();
+                    } else {
+                        alert('Search failed. Please try again.');
+                    }
                 }
             }
             
             async playSpotifyTrack(track) {
                 if (!this.isSpotifyReady || !track) {
+                    console.log('Spotify not ready or no track provided');
+                    return false;
+                }
+                
+                if (!this.spotifyAccessToken) {
+                    console.log('No Spotify access token');
+                    return false;
+                }
+                
+                if (!this.spotifyDeviceId) {
+                    console.log('No Spotify device ID');
                     return false;
                 }
                 
                 try {
-                    await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${this.spotifyDeviceId}`, {
+                    console.log('Playing track:', track.name, 'by', track.artists[0].name);
+                    console.log('Device ID:', this.spotifyDeviceId);
+                    
+                    // First, ensure our device is active
+                    await fetch(`https://api.spotify.com/v1/me/player`, {
                         method: 'PUT',
                         headers: {
                             'Authorization': `Bearer ${this.spotifyAccessToken}`,
                             'Content-Type': 'application/json',
                         },
                         body: JSON.stringify({
-                            uris: [track.uri]
+                            device_ids: [this.spotifyDeviceId],
+                            play: false
                         }),
                     });
-                    return true;
+                    
+                    // Small delay to ensure device transfer
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    
+                    // Now play the track
+                    const playResponse = await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${this.spotifyDeviceId}`, {
+                        method: 'PUT',
+                        headers: {
+                            'Authorization': `Bearer ${this.spotifyAccessToken}`,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            uris: [track.uri],
+                            position_ms: 0
+                        }),
+                    });
+                    
+                    if (playResponse.ok) {
+                        console.log('✅ Track started playing successfully');
+                        // Set volume to a reasonable level
+                        setTimeout(() => {
+                            if (this.spotifyPlayer) {
+                                this.spotifyPlayer.setVolume(0.6);
+                            }
+                        }, 1000);
+                        return true;
+                    } else {
+                        const errorData = await playResponse.text();
+                        console.error('Failed to play track:', playResponse.status, errorData);
+                        
+                        if (playResponse.status === 401) {
+                            console.log('Token expired, disconnecting Spotify');
+                            this.disconnectSpotify();
+                        } else if (playResponse.status === 404) {
+                            console.log('Device not found, reinitializing player');
+                            await this.initializeSpotifyPlayer();
+                        }
+                        return false;
+                    }
                 } catch (error) {
-                    console.error('Failed to play track:', error);
+                    console.error('Error playing Spotify track:', error);
                     return false;
                 }
             }
