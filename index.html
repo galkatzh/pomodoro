@@ -1255,6 +1255,12 @@
                             console.log('✅ Spotify player ready with device ID:', device_id);
                             this.spotifyDeviceId = device_id;
                             this.isSpotifyReady = true;
+                            
+                            // Set initial volume
+                            this.spotifyPlayer.setVolume(0.6).then(() => {
+                                console.log('Initial volume set');
+                            });
+                            
                             resolve();
                         });
                         
@@ -1354,10 +1360,20 @@
                 
                 console.log(`🎵 Testing ${type} track:`, track.name);
                 
+                // Ensure user interaction by requiring player to be resumed first
+                try {
+                    if (this.spotifyPlayer) {
+                        await this.spotifyPlayer.resume();
+                        console.log('Player resumed for user interaction');
+                    }
+                } catch (error) {
+                    console.log('Resume failed, but continuing:', error);
+                }
+                
                 const success = await this.playSpotifyTrack(track);
                 
                 if (success) {
-                    alert(`✅ Playing "${track.name}" by ${track.artists[0].name}`);
+                    alert(`✅ Playing "${track.name}" by ${track.artists[0].name}\n\nIf you can't hear audio:\n1. Check your device volume\n2. Make sure Spotify isn't muted\n3. Try clicking Test again\n4. Check if another device is playing`);
                 } else {
                     alert(`❌ Failed to play track. Check browser console for details.`);
                 }
@@ -1466,22 +1482,25 @@ Check browser console (F12) for detailed error messages.
                     console.log('Spotify not ready or no track provided');
                     return false;
                 }
-                
+            
                 if (!this.spotifyAccessToken) {
                     console.log('No Spotify access token');
                     return false;
                 }
-                
+            
                 if (!this.spotifyDeviceId) {
                     console.log('No Spotify device ID');
                     return false;
                 }
-                
+            
                 try {
                     console.log('Playing track:', track.name, 'by', track.artists[0].name);
                     console.log('Device ID:', this.spotifyDeviceId);
                     
-                    // First, ensure our device is active
+                    // Resume the player first to handle autoplay restrictions
+                    await this.spotifyPlayer.resume();
+                    
+                    // Ensure our device is active and set volume
                     await fetch(`https://api.spotify.com/v1/me/player`, {
                         method: 'PUT',
                         headers: {
@@ -1494,8 +1513,16 @@ Check browser console (F12) for detailed error messages.
                         }),
                     });
                     
-                    // Small delay to ensure device transfer
-                    await new Promise(resolve => setTimeout(resolve, 500));
+                    // Set volume through API as well
+                    await fetch(`https://api.spotify.com/v1/me/player/volume?volume_percent=60&device_id=${this.spotifyDeviceId}`, {
+                        method: 'PUT',
+                        headers: {
+                            'Authorization': `Bearer ${this.spotifyAccessToken}`,
+                        },
+                    });
+                    
+                    // Wait for device transfer
+                    await new Promise(resolve => setTimeout(resolve, 1000));
                     
                     // Now play the track
                     const playResponse = await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${this.spotifyDeviceId}`, {
@@ -1512,12 +1539,15 @@ Check browser console (F12) for detailed error messages.
                     
                     if (playResponse.ok) {
                         console.log('✅ Track started playing successfully');
-                        // Set volume to a reasonable level
-                        setTimeout(() => {
+                        
+                        // Double-check volume setting
+                        setTimeout(async () => {
                             if (this.spotifyPlayer) {
-                                this.spotifyPlayer.setVolume(0.6);
+                                await this.spotifyPlayer.setVolume(0.6);
+                                console.log('Volume set to 0.6');
                             }
-                        }, 1000);
+                        }, 1500);
+                        
                         return true;
                     } else {
                         const errorData = await playResponse.text();
