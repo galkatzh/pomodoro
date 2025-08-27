@@ -504,10 +504,8 @@
                 }, 1000);
                 setTimeout(() => {
                     audio.play().catch(() => {});
-                }, 2000);                
+                }, 2000); 
             } catch (e) {}
-            
-            alert(`${currentType === 'session' ? 'Work session' : currentType} completed!`);
         }
 
         function startSession() {
